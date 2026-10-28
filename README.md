@@ -155,4 +155,4 @@ También puedes probar todos los endpoints desde `/docs` (Swagger).
 
 ## 👥 Integrantes
 
-- [Nombre Apellido — aprendiz SENA]
+- [Silvia Daniela Figueroa — aprendiz SENA]
