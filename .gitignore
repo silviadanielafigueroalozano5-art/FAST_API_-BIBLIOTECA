@@ -1,0 +1,23 @@
+# Variables de entorno (credenciales — nunca subir al repositorio)
+.env
+
+# Entorno virtual (se regenera con: pip install -r requirements.txt)
+.venv/
+
+# Caché de Python
+__pycache__/
+*.py[cod]
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema operativo
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs y archivos temporales
+*.log
+*.tmp
