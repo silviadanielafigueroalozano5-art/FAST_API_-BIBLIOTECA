@@ -15,7 +15,7 @@ TELEFONO_RE = re.compile(r"^[+\d][\d\s]{6,14}$")
 
 class SocioBase(BaseModel):
     nombre: str = Field(min_length=2, max_length=100, examples=["Ana Gómez"])
-    email: EmailStr = Field(examples=["ana@correo.com"])
+    email: EmailStr = Field(max_length=150, examples=["ana@correo.com"])
     telefono: str | None = Field(
         default=None,
         min_length=7,
@@ -56,7 +56,7 @@ class SocioUpdate(BaseModel):
     """PATCH de socio: solo se actualizan los campos enviados."""
 
     nombre: str | None = Field(default=None, min_length=2, max_length=100)
-    email: EmailStr | None = None
+    email: EmailStr | None = Field(default=None, max_length=150)
     telefono: str | None = Field(default=None, min_length=7, max_length=15)
 
     @field_validator("nombre", "email", mode="before")
@@ -68,6 +68,29 @@ class SocioUpdate(BaseModel):
     @classmethod
     def email_en_minusculas(cls, valor: EmailStr | None) -> str | None:
         return str(valor).lower() if valor else valor
+
+    @field_validator("telefono")
+    @classmethod
+    def validar_telefono(cls, valor: str | None) -> str | None:
+        if valor is None:
+            return valor
+        valor = valor.strip()
+        if not TELEFONO_RE.fullmatch(valor):
+            raise ValueError(
+                "El teléfono solo puede contener dígitos, espacios y '+', de 7 a 15 caracteres"
+            )
+        return valor
+
+
+class SocioActualizarPropio(BaseModel):
+    nombre: str | None = Field(default=None, min_length=2, max_length=100)
+    telefono: str | None = Field(default=None, min_length=7, max_length=15)
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("nombre", mode="before")
+    @classmethod
+    def limpiar_nombre(cls, valor: object) -> object:
+        return valor.strip() if isinstance(valor, str) else valor
 
     @field_validator("telefono")
     @classmethod

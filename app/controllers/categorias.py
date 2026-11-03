@@ -4,7 +4,7 @@
 Los controladores hacen las consultas (SQLAlchemy), aplican las reglas
 de negocio y lanzan las excepciones propias de core/exceptions.py.
 """
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import Conflicto, NoEncontrado
@@ -21,8 +21,13 @@ def crear_categoria(db: Session, datos) -> Categoria:
     return categoria
 
 
-def listar_categorias(db: Session, skip: int = 0, limit: int = 20) -> list[Categoria]:
-    return list(db.scalars(select(Categoria).offset(skip).limit(limit)).all())
+def listar_categorias(
+    db: Session, skip: int = 0, limit: int = 20
+) -> tuple[list[Categoria], int]:
+    consulta = select(Categoria)
+    total = db.scalar(select(func.count()).select_from(consulta.subquery())) or 0
+    items = list(db.scalars(consulta.offset(skip).limit(limit)).all())
+    return items, total
 
 
 def obtener_categoria(db: Session, categoria_id: int) -> Categoria:

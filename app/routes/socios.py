@@ -1,14 +1,10 @@
-"""ROUTES - Socios (Fase 4B).
+"""Administración de socios y endpoints de autoservicio."""
 
-Las rutas reciben la petición HTTP, validan con los esquemas Pydantic
-y llaman al controlador (app/controllers/socios.py).
+from decimal import Decimal
+from typing import Annotated
 
-El DELETE de socio es especial: puede responder 200 (borrado lógico)
-o 204 (eliminación física si nunca tuvo préstamos).
-"""
-
-from fastapi import APIRouter, Depends, Query, Response, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Query, Response, status
+from sqlalchemy import func, select
 
 from app.controllers.socios import (
     actualizar_socio,
@@ -18,69 +14,195 @@ from app.controllers.socios import (
     obtener_socio,
     prestamos_del_socio,
 )
-from app.core.database import get_db
-from app.core.paginacion import paginacion
+from app.core.dependencies import Admin, SessionDep, SocioUser, Staff
+from app.core.exceptions import NoEncontrado
+from app.core.openapi import RESPUESTAS_COMUNES
+from app.models.prestamo import Prestamo
+from app.schemas.pagina import Pagina
 from app.schemas.prestamo import PrestamoResponse
-from app.schemas.socio import SocioCrear, SocioResponse, SocioUpdate
-
-socios_router = APIRouter(prefix="/socios", tags=["Socios"])
-
-
-# CREAR (POST /socios) — 409 si el email ya existe
-@socios_router.post(
-    "", response_model=SocioResponse, status_code=status.HTTP_201_CREATED
+from app.schemas.socio import (
+    SocioActualizarPropio,
+    SocioCrear,
+    SocioResponse,
+    SocioUpdate,
 )
-def ruta_crear_socio(datos: SocioCrear, db: Session = Depends(get_db)):
+
+socios_router = APIRouter(
+    prefix="/socios", tags=["Socios"], responses=RESPUESTAS_COMUNES
+)
+
+
+@socios_router.get(
+    "/me",
+    response_model=SocioResponse,
+    summary="Consultar mi perfil de socio",
+    responses={401: {"description": "No autenticado"}, 404: {"description": "Perfil no encontrado"}},
+)
+def ruta_mi_perfil(usuario: SocioUser, db: SessionDep):
+    if usuario.socio_id is None:
+        raise NoEncontrado("El usuario no tiene un perfil de socio")
+    return obtener_socio(db, usuario.socio_id)
+
+
+@socios_router.patch(
+    "/me",
+    response_model=SocioResponse,
+    summary="Actualizar mi perfil",
+    responses={401: {"description": "No autenticado"}, 422: {"description": "Campo no permitido"}},
+)
+def ruta_actualizar_mi_perfil(
+    datos: SocioActualizarPropio, usuario: SocioUser, db: SessionDep
+):
+    if usuario.socio_id is None:
+        raise NoEncontrado("El usuario no tiene un perfil de socio")
+    return actualizar_socio(db, usuario.socio_id, datos)
+
+
+@socios_router.get(
+    "/me/prestamos",
+    response_model=Pagina[PrestamoResponse],
+    summary="Consultar mis préstamos",
+    responses={401: {"description": "No autenticado"}},
+)
+def ruta_mis_prestamos(
+    usuario: SocioUser,
+    db: SessionDep,
+    estado: str | None = Query(default=None, description="activo | vencido | devuelto"),
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 10,
+):
+    if usuario.socio_id is None:
+        raise NoEncontrado("El usuario no tiene un perfil de socio")
+    items, total = prestamos_del_socio(
+        db, usuario.socio_id, estado, skip=skip, limit=limit
+    )
+    return {"items": items, "total": total, "skip": skip, "limit": limit}
+
+
+@socios_router.get(
+    "/me/multas",
+    summary="Consultar mis multas pendientes",
+    responses={401: {"description": "No autenticado"}},
+)
+def ruta_mis_multas(
+    usuario: SocioUser,
+    db: SessionDep,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 10,
+):
+    if usuario.socio_id is None:
+        raise NoEncontrado("El usuario no tiene un perfil de socio")
+    consulta = select(Prestamo).where(
+        Prestamo.socio_id == usuario.socio_id,
+        Prestamo.multa > 0,
+        Prestamo.multa_pagada.is_(False),
+    )
+    total = db.scalar(
+        select(func.count()).select_from(consulta.subquery())
+    ) or 0
+    items = list(
+        db.scalars(
+            consulta.order_by(Prestamo.fecha_devolucion.desc())
+            .offset(skip)
+            .limit(limit)
+        ).all()
+    )
+    total_adeudado = db.scalar(
+        select(func.coalesce(func.sum(Prestamo.multa), 0)).where(
+            Prestamo.socio_id == usuario.socio_id,
+            Prestamo.multa > 0,
+            Prestamo.multa_pagada.is_(False),
+        )
+    ) or Decimal("0")
+    return {
+        "items": [
+            {
+                "prestamo_id": item.id,
+                "libro_id": item.libro_id,
+                "multa": item.multa,
+                "multa_pagada": item.multa_pagada,
+                "fecha_devolucion": item.fecha_devolucion,
+            }
+            for item in items
+        ],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "total_adeudado": total_adeudado,
+    }
+
+
+@socios_router.post(
+    "",
+    response_model=SocioResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear socio",
+)
+def ruta_crear_socio(datos: SocioCrear, _: Staff, db: SessionDep):
     return crear_socio(db, datos)
 
 
-# LISTAR (GET /socios) — paginado + filtro opcional ?activo=true|false
-@socios_router.get("", response_model=list[SocioResponse])
+@socios_router.get(
+    "",
+    response_model=Pagina[SocioResponse],
+    summary="Listar socios",
+)
 def ruta_listar_socios(
-    activo: bool | None = Query(
-        default=None, description="Filtra por estado del socio"
-    ),
-    pag: dict = Depends(paginacion),
-    db: Session = Depends(get_db),
+    _: Staff,
+    db: SessionDep,
+    activo: bool | None = Query(default=None, description="Filtra por estado"),
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
-    return listar_socios(db, pag["skip"], pag["limit"], activo)
+    items, total = listar_socios(db, skip, limit, activo)
+    return {"items": items, "total": total, "skip": skip, "limit": limit}
 
 
-# OBTENER UNO (GET /socios/{socio_id})
-@socios_router.get("/{socio_id}", response_model=SocioResponse)
-def ruta_obtener_socio(socio_id: int, db: Session = Depends(get_db)):
+@socios_router.get(
+    "/{socio_id}",
+    response_model=SocioResponse,
+    summary="Consultar socio",
+    responses={401: {"description": "No autenticado"}, 403: {"description": "Permiso insuficiente"}, 404: {"description": "Socio no encontrado"}},
+)
+def ruta_obtener_socio(socio_id: int, _: Staff, db: SessionDep):
     return obtener_socio(db, socio_id)
 
 
-# ACTUALIZAR (PATCH /socios/{socio_id})
-@socios_router.patch("/{socio_id}", response_model=SocioResponse)
+@socios_router.patch(
+    "/{socio_id}",
+    response_model=SocioResponse,
+    summary="Actualizar socio",
+)
 def ruta_actualizar_socio(
-    socio_id: int, datos: SocioUpdate, db: Session = Depends(get_db)
+    socio_id: int, datos: SocioUpdate, _: Staff, db: SessionDep
 ):
     return actualizar_socio(db, socio_id, datos)
 
 
-# ELIMINAR (DELETE /socios/{socio_id})
-# - Con préstamos SIN devolver: 409 (no se puede).
-# - Solo con préstamos ya devueltos: borrado LÓGICO -> 200 con activo=false.
-# - Sin préstamos: eliminación física -> 204 sin contenido.
-@socios_router.delete("/{socio_id}")
-def ruta_eliminar_socio(socio_id: int, db: Session = Depends(get_db)):
-    resultado = eliminar_socio(db, socio_id)
-    if resultado["eliminado"]:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    return resultado["socio"]
+@socios_router.delete(
+    "/{socio_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Eliminar socio",
+)
+def ruta_eliminar_socio(socio_id: int, _: Admin, db: SessionDep) -> Response:
+    eliminar_socio(db, socio_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# HISTORIAL DEL SOCIO (GET /socios/{socio_id}/prestamos)
-# Filtro opcional: ?estado=activo | vencido | devuelto (o todo si se omite)
-@socios_router.get("/{socio_id}/prestamos", response_model=list[PrestamoResponse])
+@socios_router.get(
+    "/{socio_id}/prestamos",
+    response_model=Pagina[PrestamoResponse],
+    summary="Consultar historial de un socio",
+)
 def ruta_prestamos_del_socio(
     socio_id: int,
-    estado: str | None = Query(
-        default=None,
-        description="activo | vencido | devuelto (omite para ver todo el historial)",
-    ),
-    db: Session = Depends(get_db),
+    _: Staff,
+    db: SessionDep,
+    estado: str | None = Query(default=None, description="activo | vencido | devuelto"),
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ):
-    return prestamos_del_socio(db, socio_id, estado)
+    items, total = prestamos_del_socio(
+        db, socio_id, estado, skip=skip, limit=limit
+    )
+    return {"items": items, "total": total, "skip": skip, "limit": limit}

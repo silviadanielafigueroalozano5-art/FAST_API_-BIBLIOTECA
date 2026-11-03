@@ -1,21 +1,32 @@
-"""CORE - Configuración central del proyecto.
+"""Configuración tipada cargada desde el entorno y el archivo .env."""
 
-Carga las variables del archivo .env con python-dotenv
-(credenciales de la BD, SECRET_KEY, entorno, etc.).
-"""
-import os
+from functools import lru_cache
+from typing import Literal
 
-from dotenv import load_dotenv
+from pydantic import Field, SecretStr, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Carga las variables definidas en el archivo .env (raíz del proyecto)
-load_dotenv()
 
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "1234")
-DB_NAME = os.getenv("DB_NAME", "biblioteca")
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-DATABASE_URL = (
-    f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-)
+    database_url: str
+    test_database_url: str | None = None
+    secret_key: SecretStr = Field(min_length=32)
+    algorithm: Literal["HS256"] = "HS256"
+    access_token_expire_minutes: int = Field(default=15, gt=0)
+    refresh_token_expire_days: int = Field(default=7, gt=0)
+    cors_origins: list[str] = Field(default_factory=list)
+    environment: Literal["dev", "test", "prod"] = "dev"
+    tasa_multa_diaria: str = "0.50"
+
+    @model_validator(mode="after")
+    def validar_cors_produccion(self):
+        if self.environment == "prod" and "*" in self.cors_origins:
+            raise ValueError("CORS_ORIGINS no puede contener '*' en producción")
+        return self
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

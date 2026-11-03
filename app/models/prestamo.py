@@ -14,7 +14,7 @@ El ESTADO NO SE GUARDA: se calcula a partir de las fechas
 """
 from datetime import date
 from decimal import Decimal
-from sqlalchemy import Date, ForeignKey, Numeric
+from sqlalchemy import Boolean, Date, ForeignKey, Numeric
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -36,7 +36,12 @@ class Prestamo(Base):
     multa: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0)
     # False hasta que el socio la pague (la multa devuelta con retraso
     # cuenta como PENDIENTE para las reglas de préstamo)
-    multa_pagada: Mapped[bool] = mapped_column(default=True)
+    multa_pagada: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="false"
+    )
+    registrado_por_id: Mapped[int | None] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Relaciones inversas
     libro: Mapped["Libro"] = relationship()

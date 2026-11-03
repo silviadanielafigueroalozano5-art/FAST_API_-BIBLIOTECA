@@ -1,158 +1,181 @@
-# 📚 Taller API FastAPI — Biblioteca
+# API REST segura para una biblioteca
 
-API REST para gestionar los préstamos de una biblioteca: autores, categorías, libros, socios y préstamos (con multas y reportes). Construida con **Python + FastAPI + SQLAlchemy + PostgreSQL**, organizada con el **patrón MVC**.
+API construida con FastAPI, SQLAlchemy 2 y PostgreSQL. Conserva los CRUD y
+reglas de préstamo del Taller 1, con JWT, roles, control de propiedad,
+contraseñas Argon2 y migraciones Alembic.
 
----
+## Requisitos
 
-## 🛠️ Instalación
+- Python 3.12 o superior
+- Docker Desktop con Docker Compose, o PostgreSQL 16
 
-1. Clona el repositorio y entra a la carpeta del proyecto.
-
-2. Crea el entorno virtual:
-
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\activate      # Windows
-   source .venv/bin/activate     # Linux/Mac
-   ```
-
-3. Instala las dependencias:
-
-   ```powershell
-   pip install -r requirements.txt
-   ```
-
-4. Copia `.env.example` como `.env` y coloca tus credenciales de PostgreSQL:
-
-   ```powershell
-   Copy-Item .env.example .env
-   ```
-
-5. Crea la base de datos **vacía** en PostgreSQL (el nombre que pusiste en `DB_NAME`). Las tablas se generan solas al arrancar la API (`Base.metadata.create_all`).
-
-## 🚀 Ejecutar
-
-Desde la carpeta del proyecto:
+## Instalación local
 
 ```powershell
-uvicorn app.main:app --reload
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
+Copy-Item .env.example .env
 ```
 
-- Documentación interactiva (Swagger): http://127.0.0.1:8000/docs
-- La API responde en formato JSON.
-
-## 🔐 Variables de entorno
-
-| Variable | Descripción | Ejemplo |
-|---|---|---|
-| `DB_HOST` | Host de PostgreSQL | `localhost` |
-| `DB_PORT` | Puerto | `5432` |
-| `DB_USER` | Usuario | `postgres` |
-| `DB_PASSWORD` | Contraseña | `****` |
-| `DB_NAME` | Nombre de la base de datos | `biblioteca` |
-
-## 📁 Estructura (MVC)
-
-```
-biblioteca-api/
-├── app/
-│   ├── main.py           ← crea la app, registra routers y errores
-│   ├── core/             ← database, config, exceptions, paginación
-│   ├── models/           ← autor (+ libro), categoria (+ N:M), socio, prestamo
-│   ├── schemas/          ← validación Pydantic (uno por recurso + reportes)
-│   ├── controllers/      ← consultas SQL y reglas de negocio
-│   └── routes/           ← endpoints HTTP (no escriben SQL)
-├── scripts/              ← pruebas de los casos del taller
-├── .env / .env.example / .gitignore
-├── requirements.txt
-└── README.md
-```
-
-## 🔗 Tabla de endpoints
-
-### Autores
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/autores` | Lista paginada. Filtro `?nacionalidad=` |
-| GET | `/autores/{id}` | Consulta un autor (404 si no existe) |
-| GET | `/autores/{id}/libros` | Libros del autor |
-| POST | `/autores` | Crea (409 si el nombre ya existe) |
-| PATCH | `/autores/{id}` | Actualiza solo campos enviados |
-| DELETE | `/autores/{id}` | Elimina (409 si tiene libros) |
-
-### Categorías
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/categorias` | Lista paginada |
-| GET | `/categorias/{id}` | Consulta una |
-| POST | `/categorias` | Crea (409 si ya existe) |
-| PATCH | `/categorias/{id}` | Actualiza |
-| DELETE | `/categorias/{id}` | Elimina; se quita de los libros que la tenían |
-
-### Libros
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/libros` | Lista paginada con filtros combinables: `?buscar=` (título), `?autor=` (nombre, join), `?categoria_id=`, `?desde=`/`?hasta=` (año), `?orden=titulo\|-titulo\|anio\|-anio` |
-| GET | `/libros/{id}` | Detalle con autor, categorías y `disponibles` calculado |
-| POST | `/libros` | Crea (404 autor/categoría inexistente, 409 ISBN duplicado) |
-| PATCH | `/libros/{id}` | Actualiza; `categoria_ids` reemplaza las categorías. 422 si ejemplares < préstamos activos |
-| DELETE | `/libros/{id}` | Elimina (409 si tiene préstamos sin devolver) |
-
-### Socios
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/socios` | Lista paginada. Filtro `?activo=true/false` |
-| GET | `/socios/{id}` | Consulta un socio |
-| GET | `/socios/{id}/prestamos` | Préstamos del socio. Filtro `?estado=activo\|vencido\|devuelto` |
-| POST | `/socios` | Crea (409 si el email ya existe) |
-| PATCH | `/socios/{id}` | Actualiza |
-| DELETE | `/socios/{id}` | 409 si tiene préstamos sin devolver; si solo tiene devueltos se desactiva (borrado lógico); si no tiene, se elimina |
-
-### Préstamos
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/prestamos` | Lista paginada. Filtros `?estado=`, `?socio_id=`, `?libro_id=` |
-| GET | `/prestamos/{id}` | Detalle con libro y socio anidados y estado calculado |
-| POST | `/prestamos` | Registra un préstamo (reglas R1–R8) |
-| POST | `/prestamos/{id}/devolucion` | Registra la devolución y calcula la multa (R9–R10) |
-
-### Reportes
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/reportes/libros-mas-prestados?limite=5` | Libro, autor y total de préstamos, de mayor a menor |
-| GET | `/reportes/categorias` | Total de libros por categoría (incluye las de 0) |
-| GET | `/reportes/prestamos-vencidos` | Préstamo, título, socio, email, fecha límite y días de retraso |
-| GET | `/reportes/socios-con-multas` | Socio, total de multas y préstamos vencidos |
-| GET | `/reportes/autores` | Libros, ejemplares y préstamos por autor |
-| GET | `/reportes/resumen` | Totales generales de la biblioteca |
-
-### Reglas de negocio de préstamos (R1–R10)
-- **R1–R2**: el socio y el libro deben existir (404).
-- **R3**: el socio debe estar activo (422).
-- **R4**: sin préstamos vencidos (422).
-- **R5**: máximo 3 préstamos sin devolver (422).
-- **R6**: no repetir el mismo libro sin devolver (409).
-- **R7**: el libro debe tener ejemplares disponibles (422).
-- **R8**: `fecha_limite = fecha_prestamo + dias` (1–30, por defecto 14).
-- **R9–R10**: al devolver, si hay retraso: `multa = días de retraso × 0,50`.
-
-## ✅ Pruebas
-
-Con la base de datos creada y el `.env` configurado:
+Genera una clave propia y reemplaza `SECRET_KEY` en `.env`. No compartas ni
+subas ese archivo:
 
 ```powershell
-$env:PYTHONPATH="."; .\.venv\Scripts\python.exe scripts\prueba_casos24.py   # los 24 casos del taller
-$env:PYTHONPATH="."; .\.venv\Scripts\python.exe scripts\prueba_fase7.py     # reglas R1-R10 y reportes
+python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-También puedes probar todos los endpoints desde `/docs` (Swagger).
+Con Docker Compose:
 
-## 📄 Formato de respuestas
+```powershell
+docker compose up -d db
+```
 
-- Éxito: el recurso en JSON (`201` al crear, `204` al eliminar sin cuerpo).
-- Error propio: `{ "detail": "mensaje" }` (400/404/409/422 según el caso).
-- Error de validación: `{ "detail": [ { "loc": [...], "msg": "..." } ] }`.
+O crea manualmente una base PostgreSQL vacía y ajusta `DATABASE_URL` y
+`TEST_DATABASE_URL` en `.env`. Las migraciones iniciales están pensadas para
+una base vacía; respalda cualquier base previa del Taller 1 antes de migrar.
+La URL debe usar el driver `psycopg`, por ejemplo
+`postgresql+psycopg://usuario:clave@localhost:5432/biblioteca`.
 
-## 👥 Integrantes
+## Migraciones y ejecución
 
-- [Silvia Daniela Figueroa — aprendiz SENA]
+Las tablas no se crean al iniciar la API. Aplícalas desde la raíz:
+
+```powershell
+python -m alembic upgrade head
+fastapi dev app/main.py
+```
+
+La API queda disponible en `http://127.0.0.1:8000`; Swagger se encuentra en
+`/docs`. En `ENVIRONMENT=prod` Swagger, ReDoc y OpenAPI quedan deshabilitados.
+
+Migraciones incluidas:
+
+1. `0001_estado_inicial`: tablas del catálogo, socios y préstamos.
+2. `0002_multa_pagada`: columna de pago y actualización de préstamos existentes.
+3. `0003_usuarios`: usuarios, roles y vínculo uno a uno con socios.
+4. `0004_refresh_tokens`: almacenamiento de identificadores revocables.
+5. `0005_auditoria_prestamos`: usuario que registró cada préstamo.
+
+Comandos útiles:
+
+```powershell
+python -m alembic history
+python -m alembic current
+python -m alembic downgrade -1
+python -m alembic upgrade head
+```
+
+Cada revisión nueva debe incluir `upgrade()` y `downgrade()`. No edites
+migraciones ya aplicadas: crea una revisión posterior.
+
+## Usuarios iniciales y autenticación
+
+El primer administrador se crea interactivamente; la contraseña se solicita
+sin mostrarla en pantalla:
+
+```powershell
+python -m app.scripts.crear_admin
+```
+
+El registro público crea un usuario con rol `socio` y su perfil vinculado.
+Los usuarios `bibliotecario` y `admin` solo los crea un administrador desde
+`POST /api/v1/usuarios`. Las contraseñas se almacenan con Argon2; nunca se
+devuelve `password_hash`.
+
+En Swagger, usa `POST /api/v1/auth/login` con formulario OAuth2
+(`username` es el email) y autoriza las peticiones protegidas con el access
+token. El access token dura 15 minutos; el refresh token dura 7 días, se rota
+al renovarlo y se puede revocar al cerrar sesión.
+
+## Roles y permisos
+
+| Operación | Anónimo | Socio | Bibliotecario | Admin |
+|---|---:|---:|---:|---:|
+| Registro, login, refresh y health | Sí | Sí | Sí | Sí |
+| Consultar libros, autores y categorías | Sí | Sí | Sí | Sí |
+| Crear y actualizar catálogo | No | No | Sí | Sí |
+| Eliminar catálogo | No | No | No | Sí |
+| Perfil y préstamos propios | No | Propios | No | No |
+| Consultar/crear socios | No | No | Sí | Sí |
+| Consultar/actualizar socio por ID | No | No | Sí | Sí |
+| Eliminar socios | No | No | No | Sí |
+| Consultar préstamos | No | Propios | Todos | Todos |
+| Registrar, devolver préstamos y cobrar multas | No | No | Sí | Sí |
+| Reportes | No | No | Sí | Sí |
+| Administrar usuarios y roles | No | No | No | Sí |
+
+Un socio que intenta consultar un préstamo ajeno recibe 404. La API limita
+los intentos de login a 10 por minuto y los registros a 5 por minuto por IP.
+Tras cinco intentos fallidos consecutivos, la cuenta se bloquea por 15 minutos.
+
+## Endpoints principales
+
+Todas las rutas usan el prefijo `/api/v1`.
+
+| Método | Ruta | Acceso |
+|---|---|---|
+| GET | `/health` | Público; valida PostgreSQL |
+| POST | `/auth/registro` | Público |
+| POST | `/auth/login` | Público, OAuth2 Password |
+| POST | `/auth/refresh` | Público; rota refresh token |
+| POST | `/auth/logout` | Autenticado |
+| GET | `/auth/me` | Autenticado |
+| PATCH | `/auth/me/password` | Autenticado |
+| GET | `/libros`, `/autores`, `/categorias` | Público |
+| POST/PATCH | `/libros`, `/autores`, `/categorias` | Bibliotecario o admin |
+| DELETE | `/libros/{id}`, `/autores/{id}`, `/categorias/{id}` | Admin |
+| GET/PATCH | `/socios/me` | El socio propietario |
+| GET | `/socios/me/prestamos`, `/socios/me/multas` | El socio propietario |
+| GET/POST | `/socios` | Bibliotecario o admin |
+| GET/PATCH | `/socios/{id}` | Bibliotecario o admin |
+| DELETE | `/socios/{id}` | Admin |
+| GET | `/prestamos`, `/prestamos/{id}` | Socio: propios; staff: todos |
+| POST | `/prestamos` | Bibliotecario o admin |
+| POST | `/prestamos/{id}/devolucion` | Bibliotecario o admin |
+| POST | `/prestamos/{id}/pago-multa` | Bibliotecario o admin |
+| GET | `/reportes/*` | Bibliotecario o admin |
+| GET/POST | `/usuarios` | Admin |
+| PATCH | `/usuarios/{id}/rol`, `/usuarios/{id}/activo` | Admin |
+
+Los listados paginados usan `skip` y `limit` y responden, por ejemplo:
+
+```json
+{"items": [], "total": 0, "skip": 0, "limit": 10}
+```
+
+Las respuestas 401 incluyen `WWW-Authenticate: Bearer`. La API también
+configura CORS desde `CORS_ORIGINS`, un `X-Request-ID` por petición, logs sin
+credenciales ni tokens y respuestas genéricas para errores 500.
+
+## Pruebas
+
+Configura `TEST_DATABASE_URL` con una base de datos exclusiva para pruebas.
+Cuando no se define en el entorno de pytest, las pruebas usan SQLite en memoria.
+
+```powershell
+python -m pytest
+python -m pytest --cov=app --cov-report=term-missing --cov-fail-under=70
+```
+
+## Variables de entorno
+
+| Variable | Uso |
+|---|---|
+| `DATABASE_URL` | URL PostgreSQL de la API |
+| `TEST_DATABASE_URL` | Base aislada para pytest |
+| `SECRET_KEY` | Firma JWT; mínimo 32 caracteres |
+| `ALGORITHM` | Algoritmo JWT; `HS256` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Duración del access token |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | Duración del refresh token |
+| `CORS_ORIGINS` | Lista JSON de orígenes permitidos |
+| `ENVIRONMENT` | `dev`, `test` o `prod` |
+| `TASA_MULTA_DIARIA` | Valor de la multa por día |
+
+Consulta `.env.example`. `SECRET_KEY` debe generarse de forma privada y no
+debe subirse al repositorio. En producción, define explícitamente los orígenes
+CORS permitidos; no se acepta `*`.
+
+## Integrantes
+
+- Silvia Daniela Figueroa — aprendiz SENA

@@ -25,7 +25,8 @@ class Socio(Base):
     activo: Mapped[bool] = mapped_column(default=True)
     # La genera la base de datos al insertar
     fecha_alta: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
     prestamos: Mapped[list["Prestamo"]] = relationship(back_populates="socio")
+    usuario: Mapped["Usuario | None"] = relationship(back_populates="socio", uselist=False)

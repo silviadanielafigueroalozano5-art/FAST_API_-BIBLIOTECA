@@ -17,7 +17,6 @@ Reglas al devolver:
 - no se puede devolver dos veces.
 - multa = días de retraso (devolución - límite) × TASA_MULTA_DIARIA.
 """
-import os
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -25,6 +24,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.controllers.socios import obtener_socio
+from app.core.config import get_settings
 from app.core.exceptions import (
     Conflicto,
     NoEncontrado,
@@ -36,7 +36,7 @@ from app.models.prestamo import Prestamo
 # Límites de la fase 5
 DIAS_PRESTAMO_DEFAULT = 14  # R8: días por defecto si el cliente no envía 'dias'
 # Tasa de multa (R10): 0,50 por día de retraso
-TASA_MULTA_DIARIA = Decimal(os.getenv("TASA_MULTA_DIARIA", "0.50"))
+TASA_MULTA_DIARIA = Decimal(get_settings().tasa_multa_diaria)
 
 
 # ---------- CÁLCULO DE ESTADO Y MULTA ----------
@@ -96,7 +96,9 @@ def ejemplares_disponibles(db: Session, libro: Libro) -> int:
 # ---------- CREAR / CONSULTAR ----------
 
 
-def crear_prestamo(db: Session, datos) -> Prestamo:
+def crear_prestamo(
+    db: Session, datos, registrado_por_id: int | None = None
+) -> Prestamo:
     """Reglas R1-R8 comprobadas en ESTE ORDEN (tabla de la fase 5).
 
     R8: fecha_limite = fecha_prestamo + dias (se calcula, no se valida).
@@ -122,6 +124,8 @@ def crear_prestamo(db: Session, datos) -> Prestamo:
     )
     if vencidos:
         raise ReglaNegocio("El socio tiene préstamos vencidos")
+    if multas_pendientes(db, socio.id) > 0:
+        raise ReglaNegocio("El socio tiene multas pendientes")
     # R5: menos de 3 préstamos sin devolver -> 422 "Máximo de 3 préstamos"
     sin_devolver = db.scalar(
         select(func.count(Prestamo.id)).where(
@@ -154,6 +158,7 @@ def crear_prestamo(db: Session, datos) -> Prestamo:
         **datos.model_dump(exclude={"dias", "fecha_prestamo"}),
         fecha_prestamo=fecha_prestamo,
         fecha_limite=fecha_prestamo + timedelta(days=dias),
+        registrado_por_id=registrado_por_id,
     )
     db.add(prestamo)
     db.commit()
@@ -168,7 +173,8 @@ def listar_prestamos(
     estado: str | None = None,
     socio_id: int | None = None,
     libro_id: int | None = None,
-) -> list[Prestamo]:
+    propio_socio_id: int | None = None,
+) -> tuple[list[Prestamo], int]:
     """Filtros combinables: ?estado=activo|vencido|devuelto, ?socio_id=, ?libro_id="""
     consulta = select(Prestamo)
     hoy = date.today()
@@ -190,8 +196,14 @@ def listar_prestamos(
         consulta = consulta.where(Prestamo.socio_id == socio_id)
     if libro_id:
         consulta = consulta.where(Prestamo.libro_id == libro_id)
+    if propio_socio_id is not None:
+        consulta = consulta.where(Prestamo.socio_id == propio_socio_id)
+    total = db.scalar(
+        select(func.count()).select_from(consulta.order_by(None).subquery())
+    ) or 0
     consulta = consulta.order_by(Prestamo.fecha_prestamo.desc())
-    return list(db.scalars(consulta.offset(skip).limit(limit)).all())
+    items = list(db.scalars(consulta.offset(skip).limit(limit)).all())
+    return items, total
 
 
 def obtener_prestamo(db: Session, prestamo_id: int) -> Prestamo:
@@ -231,6 +243,18 @@ def devolver_prestamo(
     prestamo.multa = calcular_multa(prestamo)
     # Si hay multa queda PENDIENTE de pago (False); sin multa, pagada
     prestamo.multa_pagada = not (prestamo.multa > 0)
+    db.commit()
+    db.refresh(prestamo)
+    return prestamo
+
+
+def pagar_multa(db: Session, prestamo_id: int) -> Prestamo:
+    prestamo = obtener_prestamo(db, prestamo_id)
+    if prestamo.multa <= 0:
+        raise Conflicto("Este préstamo no tiene una multa pendiente")
+    if prestamo.multa_pagada:
+        raise Conflicto("La multa de este préstamo ya fue pagada")
+    prestamo.multa_pagada = True
     db.commit()
     db.refresh(prestamo)
     return prestamo

@@ -9,6 +9,6 @@ from fastapi import Query
 
 def paginacion(
     skip: int = Query(default=0, ge=0, description="Registros a saltar"),
-    limit: int = Query(default=20, ge=1, le=100, description="Máximo de registros"),
+    limit: int = Query(default=10, ge=1, le=100, description="Máximo de registros"),
 ) -> dict[str, int]:
     return {"skip": skip, "limit": limit}

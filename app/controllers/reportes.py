@@ -1,32 +1,35 @@
-"""CONTROLLER - Reportes con agregados (Fase 6).
+"""CONTROLLER - Reportes con agregados y totales paginados.
 
-Cada reporte se resuelve con UNA SOLA consulta SQL:
-- los agregados (COUNT, SUM) se calculan en PostgreSQL, no en Python;
+Los agregados (COUNT, SUM) se calculan en PostgreSQL, no en Python;
 - LEFT JOIN para no perder filas (categorías sin libros, autores sin
   préstamos, etc.);
-- COALESCE para mostrar 0 en vez de NULL en los conteos.
+- COALESCE para mostrar 0 en vez de NULL en los conteos;
+- los totales de paginación se consultan con COUNT en la base de datos.
 """
 
-import os
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Integer, cast, func, select
+from sqlalchemy import Integer, case, cast, func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models.autor import Autor, Libro
 from app.models.categoria import Categoria, libro_categoria
 from app.models.prestamo import Prestamo
 from app.models.socio import Socio
 
-TASA_MULTA_DIARIA = Decimal(os.getenv("TASA_MULTA_DIARIA", "0.50"))
+TASA_MULTA_DIARIA = Decimal(get_settings().tasa_multa_diaria)
 
 
-def libros_mas_prestados(db: Session, limit: int = 10) -> list[dict]:
+def libros_mas_prestados(
+    db: Session, limit: int = 10, skip: int = 0
+) -> tuple[list[dict], int]:
     """Top de libros por nº de préstamos (incluye devueltos).
 
-    UNA consulta: JOIN libros+autores, COUNT de préstamos agrupado.
+    Consulta agrupada: JOIN libros+autores y COUNT de préstamos.
     """
+    total = db.scalar(select(func.count(Libro.id))) or 0
     filas = db.execute(
         select(
             Libro.id,
@@ -38,18 +41,27 @@ def libros_mas_prestados(db: Session, limit: int = 10) -> list[dict]:
         .join(Prestamo, Prestamo.libro_id == Libro.id, isouter=True)
         .group_by(Libro.id, Libro.titulo, Autor.nombre)
         .order_by(func.count(Prestamo.id).desc(), Libro.titulo)
+        .offset(skip)
         .limit(limit)
     ).all()
-    return [
-        {"libro_id": lid, "titulo": titulo, "autor": autor, "total_prestamos": total}
-        for lid, titulo, autor, total in filas
+    items = [
+        {
+            "libro_id": lid,
+            "titulo": titulo,
+            "autor": autor,
+            "total_prestamos": total_prestamos,
+        }
+        for lid, titulo, autor, total_prestamos in filas
     ]
+    return items, total
 
 
-def libros_por_categoria(db: Session) -> list[dict]:
-    """Nº de libros por categoría. UNA consulta con LEFT JOIN por la
-    tabla intermedia N:M: las categorías SIN libros aparecen con 0.
+def libros_por_categoria(
+    db: Session, skip: int = 0, limit: int = 10
+) -> tuple[list[dict], int]:
+    """Nº de libros por categoría con LEFT JOIN para incluir los ceros.
     """
+    total = db.scalar(select(func.count(Categoria.id))) or 0
     filas = db.execute(
         select(
             Categoria.id,
@@ -63,18 +75,30 @@ def libros_por_categoria(db: Session) -> list[dict]:
         )
         .group_by(Categoria.id, Categoria.nombre)
         .order_by(func.count(libro_categoria.c.libro_id).desc(), Categoria.nombre)
+        .offset(skip)
+        .limit(limit)
     ).all()
-    return [
-        {"categoria_id": cid, "categoria": nombre, "total_libros": total}
-        for cid, nombre, total in filas
+    items = [
+        {"categoria_id": cid, "categoria": nombre, "total_libros": total_libros}
+        for cid, nombre, total_libros in filas
     ]
+    return items, total
 
 
-def prestamos_vencidos(db: Session) -> list[dict]:
+def prestamos_vencidos(
+    db: Session, skip: int = 0, limit: int = 10
+) -> tuple[list[dict], int]:
     """Préstamos sin devolver con fecha_limite pasada, ordenados por
     retraso descendente. El retraso se calcula en SQL con
     CURRENT_DATE - fecha_limite.
     """
+    filtros = (
+        Prestamo.fecha_devolucion.is_(None),
+        Prestamo.fecha_limite < date.today(),
+    )
+    total = db.scalar(
+        select(func.count(Prestamo.id)).where(*filtros)
+    ) or 0
     filas = db.execute(
         select(
             Prestamo.id,
@@ -86,13 +110,12 @@ def prestamos_vencidos(db: Session) -> list[dict]:
         )
         .join(Libro, Prestamo.libro_id == Libro.id)
         .join(Socio, Prestamo.socio_id == Socio.id)
-        .where(
-            Prestamo.fecha_devolucion.is_(None),
-            Prestamo.fecha_limite < date.today(),
-        )
+        .where(*filtros)
         .order_by(Prestamo.fecha_limite)
+        .offset(skip)
+        .limit(limit)
     ).all()
-    return [
+    items = [
         {
             "prestamo_id": pid,
             "titulo": titulo,
@@ -103,13 +126,16 @@ def prestamos_vencidos(db: Session) -> list[dict]:
         }
         for pid, titulo, socio, email, limite, retraso in filas
     ]
+    return items, total
 
 
-def socios_con_multas(db: Session) -> list[dict]:
+def socios_con_multas(
+    db: Session, skip: int = 0, limit: int = 10
+) -> tuple[list[dict], int]:
     """Socios con multa PENDIENTE > 0, ordenados por multa descendente.
 
     Multa pendiente = multas impagas (devueltos con multa_pagada=False)
-    + retraso de vencidos sin devolver. Todo en UNA consulta: dos
+    + retraso de vencidos sin devolver. Usa dos
     subconsultas agregadas por socio y LEFT JOIN con socios.
     """
     hoy = date.today()
@@ -124,11 +150,12 @@ def socios_con_multas(db: Session) -> list[dict]:
         .subquery()
     )
     # Subconsulta 2: retraso acumulado de préstamos vencidos sin devolver
+    dias_retraso = cast(hoy - Prestamo.fecha_limite, Integer)
     retraso_sq = (
         select(
             Prestamo.socio_id,
             func.sum(
-                func.greatest(cast(hoy - Prestamo.fecha_limite, Integer), 0)
+                case((dias_retraso > 0, dias_retraso), else_=0)
             ).label("dias"),
             func.count(Prestamo.id).label("vencidos"),
         )
@@ -136,7 +163,7 @@ def socios_con_multas(db: Session) -> list[dict]:
         .group_by(Prestamo.socio_id)
         .subquery()
     )
-    filas = db.execute(
+    consulta = (
         select(
             Socio.id,
             Socio.nombre,
@@ -157,8 +184,12 @@ def socios_con_multas(db: Session) -> list[dict]:
                 + func.coalesce(retraso_sq.c.dias, 0) * TASA_MULTA_DIARIA
             ).desc()
         )
-    ).all()
-    return [
+    )
+    total = db.scalar(
+        select(func.count()).select_from(consulta.order_by(None).subquery())
+    ) or 0
+    filas = db.execute(consulta.offset(skip).limit(limit)).all()
+    items = [
         {
             "socio_id": sid,
             "nombre": nombre,
@@ -168,14 +199,18 @@ def socios_con_multas(db: Session) -> list[dict]:
         }
         for sid, nombre, email, multa, vencidos in filas
     ]
+    return items, total
 
 
-def reporte_autores(db: Session) -> list[dict]:
+def reporte_autores(
+    db: Session, skip: int = 0, limit: int = 10
+) -> tuple[list[dict], int]:
     """Por autor: nº de libros escritos y nº de préstamos totales.
 
-    UNA consulta con 2 LEFT JOIN y COUNT(DISTINCT) para no duplicar
+    Usa 2 LEFT JOIN y COUNT(DISTINCT) para no duplicar
     (un libro puede tener varios préstamos; un autor varios libros).
     """
+    total = db.scalar(select(func.count(Autor.id))) or 0
     filas = db.execute(
         select(
             Autor.id,
@@ -187,8 +222,10 @@ def reporte_autores(db: Session) -> list[dict]:
         .join(Prestamo, Prestamo.libro_id == Libro.id, isouter=True)
         .group_by(Autor.id, Autor.nombre)
         .order_by(func.count(func.distinct(Prestamo.id)).desc(), Autor.nombre)
+        .offset(skip)
+        .limit(limit)
     ).all()
-    return [
+    items = [
         {
             "autor_id": aid,
             "autor": nombre,
@@ -197,10 +234,12 @@ def reporte_autores(db: Session) -> list[dict]:
         }
         for aid, nombre, libros, prestamos in filas
     ]
+    return items, total
 
 
 def resumen(db: Session) -> dict:
     """Totales generales en UNA consulta (subconsultas escalares)."""
+    dias_retraso = cast(date.today() - Prestamo.fecha_limite, Integer)
     total_prestados_sq = (
         select(func.count(Prestamo.id))
         .where(Prestamo.fecha_devolucion.is_(None))
@@ -210,9 +249,7 @@ def resumen(db: Session) -> dict:
         select(
             func.coalesce(
                 func.sum(
-                    func.greatest(
-                        cast(date.today() - Prestamo.fecha_limite, Integer), 0
-                    )
+                    case((dias_retraso > 0, dias_retraso), else_=0)
                 ),
                 0,
             )

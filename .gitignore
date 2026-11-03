@@ -21,3 +21,9 @@ Desktop.ini
 # Logs y archivos temporales
 *.log
 *.tmp
+
+# Pruebas y bases de datos locales
+.pytest_cache/
+.coverage
+htmlcov/
+*.db

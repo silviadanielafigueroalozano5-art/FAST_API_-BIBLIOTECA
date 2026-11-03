@@ -9,6 +9,9 @@ Cada excepción sabe qué código HTTP le corresponde. En main.py un
 | NoEncontrado    | 404    | El recurso no existe                                   |
 | Conflicto       | 409    | Datos duplicados o borrar algo con datos dependientes  |
 | ReglaNegocio    | 422    | Una regla de la biblioteca no se cumple                |
+| NoAutenticado   | 401    | Token ausente, inválido o vencido                      |
+| Prohibido       | 403    | Usuario autenticado sin permisos                       |
+| CuentaBloqueada | 423    | Cuenta temporalmente bloqueada                         |
 """
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
@@ -47,9 +50,26 @@ class ReglaNegocio(ErrorAplicacion):
     mensaje = "Regla de negocio incumplida"
 
 
+class NoAutenticado(ErrorAplicacion):
+    status_code = status.HTTP_401_UNAUTHORIZED
+    mensaje = "No autenticado"
+
+
+class Prohibido(ErrorAplicacion):
+    status_code = status.HTTP_403_FORBIDDEN
+    mensaje = "No tiene permisos para esta acción"
+
+
+class CuentaBloqueada(ErrorAplicacion):
+    status_code = status.HTTP_423_LOCKED
+    mensaje = "Cuenta bloqueada temporalmente"
+
+
 def app_error_handler(request: Request, exc: ErrorAplicacion) -> JSONResponse:
     """ÚNICO handler: convierte cualquier AppError en {"detail": "mensaje"}."""
+    headers = {"WWW-Authenticate": "Bearer"} if isinstance(exc, NoAutenticado) else None
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.mensaje},
+        headers=headers,
     )

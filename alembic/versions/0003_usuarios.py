@@ -1,0 +1,50 @@
+"""Crea usuarios, roles y vínculo uno a uno con socios."""
+
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+revision: str = "0003_usuarios"
+down_revision: Union[str, None] = "0002_multa_pagada"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+rolusuario = sa.Enum("admin", "bibliotecario", "socio", name="rolusuario")
+
+
+def upgrade() -> None:
+    op.create_table(
+        "usuarios",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("email", sa.String(length=150), nullable=False),
+        sa.Column("nombre", sa.String(length=100), nullable=False),
+        sa.Column("password_hash", sa.String(length=255), nullable=False),
+        sa.Column("rol", rolusuario, nullable=False),
+        sa.Column("activo", sa.Boolean(), nullable=False),
+        sa.Column("intentos_fallidos", sa.Integer(), nullable=False),
+        sa.Column("bloqueado_hasta", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("socio_id", sa.Integer(), nullable=True),
+        sa.Column(
+            "creado_en",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["socio_id"],
+            ["socios.id"],
+            name=op.f("fk_usuarios_socio_id_socios"),
+            ondelete="SET NULL",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_usuarios")),
+        sa.UniqueConstraint("socio_id", name=op.f("uq_usuarios_socio_id")),
+    )
+    op.create_index("ix_usuarios_email", "usuarios", ["email"], unique=True)
+
+
+def downgrade() -> None:
+    op.drop_index("ix_usuarios_email", table_name="usuarios")
+    op.drop_table("usuarios")
+    if op.get_bind().dialect.name == "postgresql":
+        rolusuario.drop(op.get_bind(), checkfirst=True)

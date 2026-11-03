@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import Conflicto, NoEncontrado, ReglaNegocio
 from app.models.prestamo import Prestamo
 from app.models.socio import Socio
+from app.models.usuario import Usuario
 
 
 def _normalizar_email(valor: str | None) -> str | None:
@@ -24,7 +25,9 @@ def _normalizar_email(valor: str | None) -> str | None:
 
 def crear_socio(db: Session, datos) -> Socio:
     email = _normalizar_email(datos.email)
-    if db.scalar(select(Socio).where(Socio.email == email)):
+    if db.scalar(select(Socio.id).where(Socio.email == email)) or db.scalar(
+        select(Usuario.id).where(Usuario.email == email)
+    ):
         raise Conflicto(f"Ya existe un socio con el email '{email}'")
     # email ya va normalizado en minúsculas: se excluye del dump
     socio = Socio(**datos.model_dump(exclude={"email"}), email=email)
@@ -36,11 +39,15 @@ def crear_socio(db: Session, datos) -> Socio:
 
 def listar_socios(
     db: Session, skip: int = 0, limit: int = 20, activo: bool | None = None
-) -> list[Socio]:
+) -> tuple[list[Socio], int]:
     consulta = select(Socio)
     if activo is not None:
         consulta = consulta.where(Socio.activo.is_(activo))
-    return list(db.scalars(consulta.offset(skip).limit(limit)).all())
+    total = db.scalar(
+        select(func.count()).select_from(consulta.order_by(None).subquery())
+    ) or 0
+    items = list(db.scalars(consulta.offset(skip).limit(limit)).all())
+    return items, total
 
 
 def obtener_socio(db: Session, socio_id: int) -> Socio:
@@ -56,7 +63,10 @@ def actualizar_socio(db: Session, socio_id: int, datos) -> Socio:
     if "email" in cambios:
         email = _normalizar_email(cambios["email"])
         duplicado = db.scalar(select(Socio).where(Socio.email == email))
-        if duplicado and duplicado.id != socio_id:
+        usuario = db.scalar(select(Usuario).where(Usuario.email == email))
+        if (duplicado and duplicado.id != socio_id) or (
+            usuario and usuario.socio_id != socio_id
+        ):
             raise Conflicto(f"Ya existe un socio con el email '{email}'")
         cambios["email"] = email
     for campo, valor in cambios.items():
@@ -101,8 +111,12 @@ def eliminar_socio(db: Session, socio_id: int) -> dict:
 
 
 def prestamos_del_socio(
-    db: Session, socio_id: int, estado: str | None = None
-) -> list[Prestamo]:
+    db: Session,
+    socio_id: int,
+    estado: str | None = None,
+    skip: int = 0,
+    limit: int = 20,
+) -> tuple[list[Prestamo], int]:
     """Historial de préstamos de un socio con filtro opcional:
 
     - estado=activo   -> sin devolver
@@ -131,5 +145,9 @@ def prestamos_del_socio(
             f"Estado '{estado}' no válido. Usa: activo, vencido o devuelto"
         )
 
+    total = db.scalar(
+        select(func.count()).select_from(consulta.order_by(None).subquery())
+    ) or 0
     consulta = consulta.order_by(Prestamo.fecha_prestamo.desc())
-    return list(db.scalars(consulta).all())
+    items = list(db.scalars(consulta.offset(skip).limit(limit)).all())
+    return items, total

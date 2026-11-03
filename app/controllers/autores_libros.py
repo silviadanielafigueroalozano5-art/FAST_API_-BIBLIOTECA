@@ -26,12 +26,17 @@ def crear_autor(db: Session, datos) -> Autor:
     return autor
 
 
-def listar_autores(db: Session, skip: int = 0, limit: int = 20, nacionalidad: str | None = None) -> list[Autor]:
+def listar_autores(
+    db: Session, skip: int = 0, limit: int = 20, nacionalidad: str | None = None
+) -> tuple[list[Autor], int]:
     consulta = select(Autor)
     if nacionalidad:
         consulta = consulta.where(Autor.nacionalidad == nacionalidad)
-    consulta = consulta.offset(skip).limit(limit)
-    return list(db.scalars(consulta).all())
+    total = db.scalar(
+        select(func.count()).select_from(consulta.order_by(None).subquery())
+    ) or 0
+    items = list(db.scalars(consulta.offset(skip).limit(limit)).all())
+    return items, total
 
 
 def obtener_autor(db: Session, autor_id: int) -> Autor:
@@ -97,7 +102,7 @@ def listar_libros(
     nombre_autor: str | None = None,
     nacionalidad_autor: str | None = None,
     orden: str | None = None,
-) -> list[Libro]:
+) -> tuple[list[Libro], int]:
     """Listado con FILTROS COMBINABLES y ORDEN.
 
     - titulo: coincidencia parcial (ILIKE), insensible a mayúsculas.
@@ -158,7 +163,11 @@ def listar_libros(
             )
         consulta = consulta.order_by(*ordenes[orden])
 
-    return list(db.scalars(consulta.offset(skip).limit(limit)).all())
+    total = db.scalar(
+        select(func.count()).select_from(consulta.order_by(None).subquery())
+    ) or 0
+    items = list(db.scalars(consulta.offset(skip).limit(limit)).all())
+    return items, total
 
 
 def prestamos_activos_de(db: Session, libro_id: int) -> int:
@@ -226,18 +235,19 @@ def eliminar_libro(db: Session, libro_id: int) -> None:
 # ---------- LIBROS POR AUTOR (endpoint dedicado) ----------
 
 
-def libros_de_autor(db: Session, autor_id: int, skip: int = 0, limit: int = 20) -> tuple[Autor, list[Libro]]:
+def libros_de_autor(
+    db: Session, autor_id: int, skip: int = 0, limit: int = 20
+) -> tuple[Autor, list[Libro], int]:
     """GET /autores/{id}/libros — devuelve el autor y su lista de libros."""
     autor = obtener_autor(db, autor_id)
+    consulta = select(Libro).where(Libro.autor_id == autor_id)
+    total = db.scalar(
+        select(func.count()).select_from(consulta.subquery())
+    ) or 0
     libros = list(
-        db.scalars(
-            select(Libro)
-            .where(Libro.autor_id == autor_id)
-            .offset(skip)
-            .limit(limit)
-        ).all()
+        db.scalars(consulta.offset(skip).limit(limit)).all()
     )
-    return autor, libros
+    return autor, libros, total
 
 
 def detalle_libro(db: Session, libro_id: int) -> dict:
