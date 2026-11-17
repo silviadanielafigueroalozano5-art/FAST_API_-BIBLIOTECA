@@ -56,6 +56,27 @@ Migraciones incluidas:
 3. `0003_usuarios`: usuarios, roles y vínculo uno a uno con socios.
 4. `0004_refresh_tokens`: almacenamiento de identificadores revocables.
 5. `0005_auditoria_prestamos`: usuario que registró cada préstamo.
+6. `0006_libro_imagen`: URL de portada de cada libro.
+
+Si conservas la base heredada del Taller 1, no ejecutes directamente
+`alembic upgrade head`: no tiene una revisión de Alembic y su esquema difiere
+del actual. Haz primero un respaldo PostgreSQL y ejecuta el preflight:
+
+```powershell
+python -m app.scripts.migrar_bd_legada
+```
+
+Si el preflight termina correctamente, crea un respaldo PostgreSQL en formato
+Custom (pgAdmin o `pg_dump -Fc`) y aplica la alineación y las revisiones
+indicando ese archivo. El procedimiento conserva las filas y los valores
+existentes; no rellena las fechas de alta históricas que están nulas:
+
+```powershell
+python -m app.scripts.migrar_bd_legada --apply --backup C:\ruta\respaldo.dump
+```
+
+Este procedimiento solo acepta el esquema legado esperado y detiene la
+operación si detecta datos incompatibles o migraciones parciales.
 
 Comandos útiles:
 
@@ -68,6 +89,53 @@ python -m alembic upgrade head
 
 Cada revisión nueva debe incluir `upgrade()` y `downgrade()`. No edites
 migraciones ya aplicadas: crea una revisión posterior.
+
+## Frontend Vue
+
+El frontend está en `frontend/` y consume la API bajo `/api/v1`. Para ejecutarlo:
+
+```powershell
+cd frontend
+npm install
+Copy-Item .env.example .env
+npm run dev
+```
+
+Abre la dirección que indique Vite (por defecto `http://localhost:5173`).
+`VITE_API_URL` apunta por defecto a `http://127.0.0.1:8000`. CORS ya permite
+`http://localhost:5173` en el `.env` actual; si cambias el origen o puerto,
+agrega el origen exacto a `CORS_ORIGINS` en el `.env` del backend y reinicia
+FastAPI.
+
+## Despliegue en Render
+
+La raíz del repositorio contiene la API y Alembic; no muevas `app/`,
+`alembic/` ni `requirements.txt`. El frontend ya está separado en `frontend/`.
+El archivo `render.yaml` configura dos servicios independientes: la API como
+servicio Python y el frontend como sitio estático con fallback para Vue Router.
+
+1. Crea una base PostgreSQL persistente en Render (o elige una ya existente).
+   No uses la base local `localhost` en producción.
+2. En Render, crea un Blueprint desde este repositorio y configura las
+   variables marcadas `sync: false` antes del primer despliegue:
+   - `DATABASE_URL`: URL interna de PostgreSQL. Las URLs `postgres://` y
+     `postgresql://` se adaptan al driver `psycopg` instalado por el proyecto.
+   - `CORS_ORIGINS`: lista JSON con el origen exacto del frontend, por ejemplo
+     `["https://biblioteca-frontend.onrender.com"]`; nunca uses `*`.
+   - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` y
+     `CLOUDINARY_API_SECRET`: credenciales de Cloudinary.
+   Render genera `SECRET_KEY` automáticamente.
+3. Configura `VITE_API_URL` en el servicio estático con el origen HTTPS del
+   servicio API, por ejemplo `https://biblioteca-api.onrender.com`. No agregues
+   `/api/v1`; el frontend añade ese prefijo. Vuelve a desplegar el frontend
+   después de cambiar esta variable.
+4. El comando de inicio de la API aplica las migraciones Alembic antes de
+   iniciar FastAPI. Comprueba el servicio en `/api/v1/health`.
+
+La base PostgreSQL de Render es independiente de la base local: el despliegue
+no copia los libros, usuarios ni préstamos existentes. Si necesitas conservar
+los datos locales, respáldalos y planifica su importación a la base remota antes
+de usarla.
 
 ## Usuarios iniciales y autenticación
 
@@ -124,6 +192,7 @@ Todas las rutas usan el prefijo `/api/v1`.
 | PATCH | `/auth/me/password` | Autenticado |
 | GET | `/libros`, `/autores`, `/categorias` | Público |
 | POST/PATCH | `/libros`, `/autores`, `/categorias` | Bibliotecario o admin |
+| POST | `/libros/{id}/imagen` | Bibliotecario o admin; sube la portada a Cloudinary y guarda su URL |
 | DELETE | `/libros/{id}`, `/autores/{id}`, `/categorias/{id}` | Admin |
 | GET/PATCH | `/socios/me` | El socio propietario |
 | GET | `/socios/me/prestamos`, `/socios/me/multas` | El socio propietario |
@@ -137,6 +206,22 @@ Todas las rutas usan el prefijo `/api/v1`.
 | GET | `/reportes/*` | Bibliotecario o admin |
 | GET/POST | `/usuarios` | Admin |
 | PATCH | `/usuarios/{id}/rol`, `/usuarios/{id}/activo` | Admin |
+
+### Portadas de libros
+
+En `/docs`, autoriza un usuario bibliotecario o admin y usa
+`POST /api/v1/libros/con-imagen`. Swagger mostrará los campos del libro como
+formulario `multipart/form-data`; completa `titulo`, `isbn`,
+`anio_publicacion`, `ejemplares`, `autor_id` y `categoria_ids`, y selecciona
+un archivo JPEG, PNG o WebP de hasta 2 MB en `imagen`. La imagen es opcional.
+Si se envía, la API la carga a Cloudinary y guarda su `secure_url` en
+`libros.imagen_url` antes de confirmar el alta. El `POST /api/v1/libros`
+existente sigue permitiendo crear libros sin imagen mediante JSON.
+
+Para reemplazar una portada usa `POST /api/v1/libros/{id}/imagen` y selecciona
+el archivo en `imagen`. La URL nueva se guarda antes de intentar eliminar la
+portada anterior. Las consultas `GET /api/v1/libros` y
+`GET /api/v1/libros/{id}` devuelven `imagen_url` (nulo si no hay portada).
 
 Los listados paginados usan `skip` y `limit` y responden, por ejemplo:
 
@@ -171,6 +256,9 @@ python -m pytest --cov=app --cov-report=term-missing --cov-fail-under=70
 | `CORS_ORIGINS` | Lista JSON de orígenes permitidos |
 | `ENVIRONMENT` | `dev`, `test` o `prod` |
 | `TASA_MULTA_DIARIA` | Valor de la multa por día |
+| `CLOUDINARY_CLOUD_NAME` | Nombre de la nube de Cloudinary |
+| `CLOUDINARY_API_KEY` | API Key de Cloudinary |
+| `CLOUDINARY_API_SECRET` | API Secret de Cloudinary |
 
 Consulta `.env.example`. `SECRET_KEY` debe generarse de forma privada y no
 debe subirse al repositorio. En producción, define explícitamente los orígenes

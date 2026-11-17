@@ -49,10 +49,14 @@ def test_catalogo_conserva_crud_y_listados_paginados(client):
     )
     assert libro.status_code == 201
     assert libro.json()["titulo"] == "Cien Años De Soledad"
+    assert libro.json()["imagen_url"] is None
 
     libros = client.get("/api/v1/libros")
     assert libros.json()["total"] == 1
     assert libros.json()["items"][0]["id"] == libro.json()["id"]
+    assert libros.json()["items"][0]["imagen_url"] is None
+    detalle = client.get(f"/api/v1/libros/{libro.json()['id']}")
+    assert detalle.json()["imagen_url"] is None
     categorias = client.get("/api/v1/categorias")
     assert categorias.json()["total"] == 1
     por_autor = client.get(f"/api/v1/autores/{autor.json()['id']}/libros")
@@ -73,5 +77,5 @@ def test_catalogo_conserva_crud_y_listados_paginados(client):
         headers=headers,
     )
     assert actualizado.status_code == 200
-    detalle = client.get(f"/api/v1/libros/{libro.json()['id']}")
-    assert detalle.json()["disponibles"] == 2
+    detalle_actualizado = client.get(f"/api/v1/libros/{libro.json()['id']}")
+    assert detalle_actualizado.json()["disponibles"] == 2

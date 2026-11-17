@@ -24,8 +24,8 @@ class Socio(Base):
     # Por defecto True; False = borrado lógico (tiene historial)
     activo: Mapped[bool] = mapped_column(default=True)
     # La genera la base de datos al insertar
-    fecha_alta: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+    fecha_alta: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=True
     )
 
     prestamos: Mapped[list["Prestamo"]] = relationship(back_populates="socio")

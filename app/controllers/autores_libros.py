@@ -4,6 +4,9 @@ Los controladores hacen las consultas (SQLAlchemy), aplican las reglas
 de negocio y lanzan las excepciones propias de core/exceptions.py.
 Las rutas solo reciben la petición, validan con Pydantic y delegan aquí.
 """
+import logging
+
+from fastapi import HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -11,6 +14,8 @@ from app.core.exceptions import Conflicto, NoEncontrado, ReglaNegocio
 from app.models.autor import Autor, Libro
 from app.models.categoria import Categoria
 from app.models.prestamo import Prestamo
+
+logger = logging.getLogger(__name__)
 
 
 # ---------- AUTORES ----------
@@ -66,7 +71,7 @@ def eliminar_autor(db: Session, autor_id: int) -> None:
 # ---------- LIBROS ----------
 
 
-def crear_libro(db: Session, datos) -> Libro:
+def _preparar_libro(db: Session, datos) -> Libro:
     if not db.get(Autor, datos.autor_id):
         raise NoEncontrado(
             f"No existe el autor con id={datos.autor_id}. Crea el autor primero."
@@ -84,8 +89,41 @@ def crear_libro(db: Session, datos) -> Libro:
     libro = Libro(**datos_libro)
     libro.categorias = categorias
     db.add(libro)
+    return libro
+
+
+def crear_libro(db: Session, datos) -> Libro:
+    libro = _preparar_libro(db, datos)
     db.commit()
     db.refresh(libro)
+    return libro
+
+
+async def crear_libro_con_imagen(
+    db: Session, datos, archivo: UploadFile | None
+) -> Libro:
+    """Crea el libro y asocia su portada dentro de la misma transacción."""
+    from app.core.cloudinary_uploader import eliminar_portada, subir_portada
+
+    libro = _preparar_libro(db, datos)
+    imagen_subida: str | None = None
+    try:
+        db.flush()
+        if archivo is not None:
+            imagen_subida = await subir_portada(libro.id, archivo)
+            libro.imagen_url = imagen_subida
+        db.commit()
+    except Exception:
+        db.rollback()
+        if imagen_subida:
+            try:
+                await eliminar_portada(imagen_subida)
+            except HTTPException:
+                logger.exception(
+                    "No se pudo limpiar la portada tras fallar la creación del libro id=%s",
+                    libro.id,
+                )
+        raise
     return libro
 
 
@@ -214,8 +252,45 @@ def actualizar_libro(db: Session, libro_id: int, datos) -> Libro:
     return libro
 
 
-def eliminar_libro(db: Session, libro_id: int) -> None:
+async def asignar_imagen(db: Session, libro_id: int, archivo: UploadFile) -> Libro:
+    """Sube la imagen del libro a Cloudinary y guarda la URL en imagen_url."""
+    from app.core.cloudinary_uploader import eliminar_portada, subir_portada
+
     libro = obtener_libro(db, libro_id)
+    imagen_anterior = libro.imagen_url
+    imagen_nueva: str | None = None
+    try:
+        imagen_nueva = await subir_portada(libro_id, archivo)
+        libro.imagen_url = imagen_nueva
+        db.commit()
+    except Exception:
+        db.rollback()
+        if imagen_nueva:
+            try:
+                await eliminar_portada(imagen_nueva)
+            except HTTPException:
+                logger.exception(
+                    "No se pudo limpiar la portada nueva tras fallar la actualización del libro id=%s",
+                    libro_id,
+                )
+        raise
+    db.refresh(libro)
+    if imagen_anterior and imagen_anterior != imagen_nueva:
+        try:
+            await eliminar_portada(imagen_anterior)
+        except HTTPException:
+            logger.exception(
+                "La portada anterior del libro id=%s quedó sin eliminar en Cloudinary",
+                libro_id,
+            )
+    return libro
+
+
+async def eliminar_libro(db: Session, libro_id: int) -> None:
+    from app.core.cloudinary_uploader import eliminar_portada
+
+    libro = obtener_libro(db, libro_id)
+    imagen_url = libro.imagen_url
     activos = prestamos_activos_de(db, libro_id)
     if activos:
         raise Conflicto(
@@ -230,6 +305,13 @@ def eliminar_libro(db: Session, libro_id: int) -> None:
         )
     db.delete(libro)
     db.commit()
+    if imagen_url:
+        try:
+            await eliminar_portada(imagen_url)
+        except HTTPException:
+            logger.exception(
+                "La portada del libro id=%s quedó sin eliminar en Cloudinary", libro_id
+            )
 
 
 # ---------- LIBROS POR AUTOR (endpoint dedicado) ----------
@@ -264,6 +346,7 @@ def detalle_libro(db: Session, libro_id: int) -> dict:
         "isbn": libro.isbn,
         "anio_publicacion": libro.anio_publicacion,
         "ejemplares": libro.ejemplares,
+        "imagen_url": libro.imagen_url,
         "prestamos_activos": activos,
         "disponibles": libro.ejemplares - activos,
         "autor": libro.autor,

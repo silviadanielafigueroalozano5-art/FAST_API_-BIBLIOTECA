@@ -43,7 +43,7 @@ settings = get_settings()
 database_url = (
     settings.test_database_url
     if settings.environment == "test" and settings.test_database_url
-    else settings.database_url
+    else settings.database_url_efectiva
 )
 engine = crear_engine(database_url)
 SessionLocal = sessionmaker(autocommit=False, expire_on_commit=False, bind=engine)
