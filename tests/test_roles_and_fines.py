@@ -181,3 +181,39 @@ def test_registro_de_prestamo_devolucion_y_multa(client):
     assert devuelto.status_code == 200
     assert devuelto.json()["multa"] == "6.50"
     assert devuelto.json()["dias_retraso"] == 13
+
+
+def test_socio_puede_solicitar_prestamo_propio(client):
+    socio = registrar(client).json()
+    token = login(client, "ana@example.com")["access_token"]
+
+    with SessionLocal() as db:
+        autor = Autor(nombre="Autora Solicitud")
+        db.add(autor)
+        db.flush()
+        libro = Libro(
+            titulo="Libro Solicitado",
+            isbn="9780140447677",
+            anio_publicacion=2020,
+            ejemplares=1,
+            autor_id=autor.id,
+        )
+        db.add(libro)
+        db.commit()
+        libro_id = libro.id
+
+    headers = {"Authorization": f"Bearer {token}"}
+    respuesta = client.post(
+        "/api/v1/prestamos/mios",
+        json={"libro_id": libro_id},
+        headers=headers,
+    )
+    assert respuesta.status_code == 201
+    assert respuesta.json()["socio_id"] == socio["socio_id"]
+
+    repetida = client.post(
+        "/api/v1/prestamos/mios",
+        json={"libro_id": libro_id},
+        headers=headers,
+    )
+    assert repetida.status_code == 409

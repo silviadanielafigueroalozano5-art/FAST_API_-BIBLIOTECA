@@ -5,15 +5,18 @@ y llaman al controlador (app/controllers/autores_libros.py), que hace
 las consultas y aplica las reglas de negocio.
 """
 from enum import Enum
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.controllers.autores_libros import (
     actualizar_autor,
     actualizar_libro,
+    asignar_imagen,
     crear_autor,
     crear_libro,
+    crear_libro_con_imagen,
     detalle_libro,
     eliminar_autor,
     eliminar_libro,
@@ -139,6 +142,23 @@ def ruta_crear_libro(datos: LibroCrear, _: Staff, db: Session = Depends(get_db))
     return crear_libro(db, datos)
 
 
+# CREAR CON PORTADA (POST /libros/con-imagen) — multipart/form-data
+@libros_router.post(
+    "/con-imagen",
+    response_model=LibroResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear libro con portada opcional",
+)
+async def ruta_crear_libro_con_imagen(
+    datos: Annotated[LibroCrear, Form()],
+    _: Staff,
+    imagen: Annotated[UploadFile | None, File()] = None,
+    db: Session = Depends(get_db),
+):
+    """Crea un libro y, si se envía, sube su portada antes del commit."""
+    return await crear_libro_con_imagen(db, datos, imagen)
+
+
 # LISTAR (GET /libros) — paginado + FILTROS COMBINABLES (incluye JOIN con autores) + ORDEN
 @libros_router.get("", response_model=Pagina[LibroResponse], summary="Listar libros")
 def ruta_listar_libros(
@@ -186,10 +206,26 @@ def ruta_actualizar_libro(
     return actualizar_libro(db, libro_id, datos)
 
 
+# SUBIR IMAGEN (POST /libros/{libro_id}/imagen) — Cloudinary
+@libros_router.post(
+    "/{libro_id}/imagen",
+    response_model=LibroResponse,
+    summary="Subir imagen de portada (Cloudinary)",
+)
+async def ruta_subir_imagen(
+    libro_id: int,
+    _: Staff,
+    imagen: UploadFile = File(..., description="Imagen JPEG, PNG o WebP (máx 2 MB)"),
+    db: Session = Depends(get_db),
+):
+    """Sube la imagen a Cloudinary y guarda su enlace en el libro."""
+    return await asignar_imagen(db, libro_id, imagen)
+
+
 # ELIMINAR (DELETE /libros/{libro_id})
 @libros_router.delete("/{libro_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar libro")
-def ruta_eliminar_libro(libro_id: int, _: Admin, db: Session = Depends(get_db)):
-    eliminar_libro(db, libro_id)
+async def ruta_eliminar_libro(libro_id: int, _: Admin, db: Session = Depends(get_db)):
+    await eliminar_libro(db, libro_id)
     return None
 
 

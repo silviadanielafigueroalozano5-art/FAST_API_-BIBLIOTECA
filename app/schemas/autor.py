@@ -152,6 +152,7 @@ class LibroResponse(BaseModel):
     anio_publicacion: int
     ejemplares: int
     autor_id: int
+    imagen_url: str | None = None
     autor: AutorResponse
     categorias: list[CategoriaIdInLibroResponse] = []
 
@@ -176,6 +177,7 @@ class LibroDetalle(BaseModel):
     ejemplares: int
     prestamos_activos: int = 0
     disponibles: int = 0
+    imagen_url: str | None = None
     autor: AutorResponse
     categorias: list[CategoriaIdInLibroResponse] = []
 

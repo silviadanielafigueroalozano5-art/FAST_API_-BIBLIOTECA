@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from app.core.database import SessionLocal
 from app.core.security import hashear_password
@@ -121,6 +121,32 @@ def test_login_bloquea_despues_de_cinco_intentos(client):
     bloqueado = login(client, "ana@example.com")
     assert bloqueado.status_code == 423
     assert bloqueado.json()["detail"] == "Cuenta bloqueada temporalmente"
+
+
+def test_intento_no_extiende_bloqueo_y_expira_reinicia_contador(client):
+    registrar(client)
+    for _ in range(5):
+        assert login(client, "ana@example.com", "Incorrecta123").status_code == 401
+
+    with SessionLocal() as db:
+        usuario = db.query(Usuario).filter_by(email="ana@example.com").one()
+        bloqueado_hasta = usuario.bloqueado_hasta
+
+    assert login(client, "ana@example.com", "Incorrecta123").status_code == 401
+    with SessionLocal() as db:
+        usuario = db.query(Usuario).filter_by(email="ana@example.com").one()
+        assert usuario.bloqueado_hasta == bloqueado_hasta
+        assert usuario.intentos_fallidos == 5
+        usuario.bloqueado_hasta = datetime.now(timezone.utc) - timedelta(minutes=1)
+        db.commit()
+
+    assert login(client, "ana@example.com", "Incorrecta123").status_code == 401
+    with SessionLocal() as db:
+        usuario = db.query(Usuario).filter_by(email="ana@example.com").one()
+        assert usuario.bloqueado_hasta is None
+        assert usuario.intentos_fallidos == 1
+
+    assert login(client, "ana@example.com")["token_type"] == "bearer"
 
 
 def test_limiter_devuelve_429_en_el_login(client):
