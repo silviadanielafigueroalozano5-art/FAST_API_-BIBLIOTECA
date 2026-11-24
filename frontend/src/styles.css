@@ -1126,7 +1126,8 @@ select:focus-visible {
 
 .stack-form input,
 .field input,
-.field select {
+.field select,
+.stack-form select {
   width: 100%;
   min-height: 43px;
   padding: 10px 12px;
@@ -1135,6 +1136,76 @@ select:focus-visible {
   background: var(--surface);
   color: var(--ink);
   font-size: 12px;
+  font-weight: 400;
+}
+
+.password-input {
+  position: relative;
+  display: block;
+}
+
+.password-input input {
+  padding-right: 78px;
+}
+
+.password-input__toggle {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  transform: translateY(-50%);
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--secondary-deep);
+  cursor: pointer;
+}
+
+.password-input__toggle:hover {
+  background: #ecece5;
+}
+
+.password-input__toggle svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.password-input__toggle:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.form-switch {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.form-switch button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--secondary-deep);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.field-optional {
+  color: var(--muted);
   font-weight: 400;
 }
 

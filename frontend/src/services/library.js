@@ -51,3 +51,19 @@ export async function listCategories() {
 export async function getLibrarySummary() {
   return (await api.get("/reportes/resumen")).data;
 }
+
+export async function listMembers(params = {}) {
+  return (
+    await api.get("/socios", {
+      params: { skip: 0, limit: 100, ...params },
+    })
+  ).data;
+}
+
+export async function createLoan(fields) {
+  return (await api.post("/prestamos", fields)).data;
+}
+
+export async function requestMyLoan(libroId, dias = 14) {
+  return (await api.post("/prestamos/mios", { libro_id: libroId, dias })).data;
+}

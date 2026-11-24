@@ -43,6 +43,17 @@ class PrestamoCrear(BaseModel):
         return valor
 
 
+class PrestamoSolicitar(BaseModel):
+    libro_id: int = Field(gt=0, examples=[1])
+    dias: int = Field(
+        default=DIAS_DEFAULT,
+        ge=1,
+        le=DIAS_MAX,
+        description=f"Días del préstamo (1 a {DIAS_MAX}). Por defecto {DIAS_DEFAULT}",
+        examples=[14],
+    )
+
+
 class PrestamoResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

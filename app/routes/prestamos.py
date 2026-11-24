@@ -15,7 +15,7 @@ from app.controllers.prestamos import (
     obtener_prestamo,
     pagar_multa,
 )
-from app.core.dependencies import CurrentUser, SessionDep, Staff
+from app.core.dependencies import CurrentUser, SessionDep, SocioUser, Staff
 from app.core.exceptions import NoEncontrado
 from app.core.openapi import RESPUESTAS_COMUNES
 from app.core.paginacion import paginacion
@@ -24,6 +24,7 @@ from app.schemas.prestamo import (
     PrestamoDevolucion,
     PrestamoDevolucionIn,
     PrestamoResponse,
+    PrestamoSolicitar,
 )
 from app.schemas.pagina import Pagina
 from app.models.usuario import RolUsuario
@@ -44,6 +45,24 @@ prestamos_router = APIRouter(
 )
 def ruta_crear_prestamo(datos: PrestamoCrear, usuario: Staff, db: SessionDep):
     return crear_prestamo(db, datos, registrado_por_id=usuario.id)
+
+
+@prestamos_router.post(
+    "/mios",
+    response_model=PrestamoResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Solicitar un préstamo propio",
+    responses={401: {"description": "No autenticado"}, 403: {"description": "Solo socios"}},
+)
+def ruta_solicitar_prestamo(datos: PrestamoSolicitar, usuario: SocioUser, db: SessionDep):
+    if usuario.socio_id is None:
+        raise NoEncontrado("El usuario no tiene un perfil de socio")
+    prestamo = PrestamoCrear(
+        libro_id=datos.libro_id,
+        socio_id=usuario.socio_id,
+        dias=datos.dias,
+    )
+    return crear_prestamo(db, prestamo, registrado_por_id=usuario.id)
 
 
 # LISTAR (GET /prestamos) — paginado + FILTROS COMBINABLES

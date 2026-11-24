@@ -87,19 +87,25 @@ def _crear_par_tokens(db: Session, usuario: Usuario) -> dict[str, int | str]:
 def iniciar_sesion(db: Session, email: str, password: str) -> dict[str, int | str]:
     email = email.strip().lower()
     usuario = db.scalar(select(Usuario).where(Usuario.email == email))
+    ahora = datetime.now(timezone.utc)
     password_valida = verificar_password(
         password, usuario.password_hash if usuario else DUMMY_PASSWORD_HASH
     )
     if usuario is None or not password_valida:
         if usuario is not None:
-            ahora = datetime.now(timezone.utc)
-            usuario.intentos_fallidos += 1
-            if usuario.intentos_fallidos >= 5:
-                usuario.bloqueado_hasta = ahora + timedelta(minutes=15)
-            db.commit()
+            bloqueado_hasta = usuario.bloqueado_hasta
+            if bloqueado_hasta is not None and bloqueado_hasta.tzinfo is None:
+                bloqueado_hasta = bloqueado_hasta.replace(tzinfo=timezone.utc)
+            if bloqueado_hasta is None or bloqueado_hasta <= ahora:
+                if bloqueado_hasta is not None:
+                    usuario.intentos_fallidos = 0
+                    usuario.bloqueado_hasta = None
+                usuario.intentos_fallidos += 1
+                if usuario.intentos_fallidos >= 5:
+                    usuario.bloqueado_hasta = ahora + timedelta(minutes=15)
+                db.commit()
         raise NoAutenticado("Credenciales inválidas")
 
-    ahora = datetime.now(timezone.utc)
     if usuario.bloqueado_hasta is not None:
         bloqueado_hasta = usuario.bloqueado_hasta
         if bloqueado_hasta.tzinfo is None:

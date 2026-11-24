@@ -169,6 +169,7 @@ al renovarlo y se puede revocar al cerrar sesión.
 | Consultar/actualizar socio por ID | No | No | Sí | Sí |
 | Eliminar socios | No | No | No | Sí |
 | Consultar préstamos | No | Propios | Todos | Todos |
+| Solicitar préstamos propios | No | Sí | No | No |
 | Registrar, devolver préstamos y cobrar multas | No | No | Sí | Sí |
 | Reportes | No | No | Sí | Sí |
 | Administrar usuarios y roles | No | No | No | Sí |
@@ -196,6 +197,7 @@ Todas las rutas usan el prefijo `/api/v1`.
 | DELETE | `/libros/{id}`, `/autores/{id}`, `/categorias/{id}` | Admin |
 | GET/PATCH | `/socios/me` | El socio propietario |
 | GET | `/socios/me/prestamos`, `/socios/me/multas` | El socio propietario |
+| POST | `/prestamos/mios` | Socio autenticado; registra un préstamo propio |
 | GET/POST | `/socios` | Bibliotecario o admin |
 | GET/PATCH | `/socios/{id}` | Bibliotecario o admin |
 | DELETE | `/socios/{id}` | Admin |

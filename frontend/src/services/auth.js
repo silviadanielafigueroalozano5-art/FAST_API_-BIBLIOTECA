@@ -38,6 +38,16 @@ export async function signIn(email, password) {
   return currentUser.value;
 }
 
+export async function registerUser({ email, nombre, telefono, password, confirmar_password }) {
+  return (await api.post("/auth/registro", {
+    email,
+    nombre,
+    telefono: telefono || null,
+    password,
+    confirmar_password,
+  })).data;
+}
+
 export async function signOut() {
   const refreshToken = getRefreshToken();
   try {
